@@ -3,6 +3,7 @@ import pdfplumber
 import re
 import tempfile
 from gtts import gTTS
+from googletrans import Translator
 import speech_recognition as sr
 from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
 import av
@@ -20,12 +21,15 @@ if "conversation_log" not in st.session_state:
 language_map = {
     "English": "en",
     "Hindi": "hi",
-    "Tamil": "ta"
+    "Tamil": "ta",
+    "Telugu": "te"
 }
 
 st.subheader("🌐 Select Language")
 language = st.selectbox("Language", list(language_map.keys()))
 lang_code = language_map[language]
+
+translator = Translator()
 
 # ---------------- MEDICAL RANGES ----------------
 MEDICAL_RANGES = {
@@ -70,11 +74,19 @@ def analyze(values):
             results.append(f"{test} is NORMAL")
     return ". ".join(results)
 
+# ---------------- TEXT TO SPEECH ----------------
 def speak(text, lang):
-    tts = gTTS(text=text, lang=lang)
-    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    tts.save(temp.name)
-    return temp.name
+    """
+    Convert text to speech in selected language
+    """
+    try:
+        tts = gTTS(text=text, lang=lang)
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+        tts.save(temp_file.name)
+        return temp_file.name
+    except Exception as e:
+        st.error(f"Error generating speech: {e}")
+        return None
 
 # ---------------- TEXT CHAT ----------------
 st.subheader("💬 Text Chat (Optional)")
@@ -123,12 +135,15 @@ if pdf_file:
         st.session_state.conversation_log.append(f"User (Voice): {recognized_text}")
 
     if explanation:
+        # Translate explanation to selected language
+        translated_explanation = translator.translate(explanation, dest=lang_code).text
+
         st.subheader("🧠 Medical Explanation")
-        st.write(explanation)
+        st.write(translated_explanation)
 
-        st.session_state.conversation_log.append(f"System: {explanation}")
+        st.session_state.conversation_log.append(f"System: {translated_explanation}")
 
-        audio_path = speak(explanation, lang_code)
+        audio_path = speak(translated_explanation, lang_code)
         st.audio(audio_path)
 
 # ---------------- DOWNLOAD TRANSCRIPT ----------------
