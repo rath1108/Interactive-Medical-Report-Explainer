@@ -55,7 +55,7 @@ in a simple and interactive way.
 
 ### 1️⃣ Clone the Repository
 ```bash
-git clone https://github.com/your-username/medical-report-explainer.git
+git clone https://github.com/rath1108s/medical-report-explainer.git
 cd medical-report-explainer
 
 **Create Conda Environment**
