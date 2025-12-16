@@ -117,35 +117,29 @@ def extract_patient_details(text):
         details["Gender"] = "Female"
 
     # -----------------------------
-    # NAME detection (ROBUST + TITLE HANDLING)
+    # NAME detection (PRIORITY ORDER)
     # -----------------------------
-    title_pattern = r'(Mr|Mr\.|Ms|Ms\.|Mrs|Mrs\.|Miss|Dr|Dr\.)\s*'
 
-   for line in lines[:10]:
+    # 1️⃣ Explicit "Name :" format
+    for line in lines[:10]:
         name_match = re.search(r'Name\s*[:\-]\s*([A-Za-z\s]+)', line)
         if name_match:
             details["Name"] = name_match.group(1).strip()
             return details  # strongest signal → stop here
-    
-# 2️⃣ Standalone name lines (with or without title)
-    
-for line in lines[:8]:
-        clean_line = re.sub(title_pattern, '', line, flags=re.I)
 
+    title_pattern = r'(Mr|Mr\.|Ms|Ms\.|Mrs|Mrs\.|Miss|Dr|Dr\.)\s*'
+
+    # 2️⃣ Mixed-case human names (2–3 words)
+    for line in lines[:8]:
         if (
-            2 <= len(clean_line.split()) <= 4
-            and re.match(r'^[A-Za-z][A-Za-z\s]+$', clean_line)
-            and not re.search(
-                r'PATIENT|REPORT|LAB|HOSPITAL|PATHOLOGY|INFORMATION|REF|DATE',
-                clean_line,
-                re.I
-            )
+            2 <= len(line.split()) <= 4
+            and re.match(r'^[A-Za-z][A-Za-z\s\.]+$', line)
+            and not re.search(r'PATIENT|REPORT|LAB|HOSPITAL|PATHOLOGY|INFORMATION', line, re.I)
         ):
-            details["Name"] = clean_line.strip().title()
+            details["Name"] = line.strip()
             return details
 
     return details
- return details
 
 # =================================================
 # PARAMETER EXTRACTION (SAFE)
@@ -308,6 +302,7 @@ if st.session_state.conversation_log:
     )
 
 st.caption("⚠️ Educational use only. Not a medical diagnosis.")
+
 
 
 
