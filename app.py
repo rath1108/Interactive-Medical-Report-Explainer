@@ -10,7 +10,7 @@ from googletrans import Translator
 # -------------------------------------------------
 st.set_page_config(page_title="Medical Report Explainer", layout="centered")
 st.title("🩺 Medical Report Explainer")
-st.write("Structured Medical Report | Multilingual Voice Explanation")
+st.write("Section-wise Condition | Multilingual Voice Explanation")
 
 # -------------------------------------------------
 # SESSION STATE
@@ -32,6 +32,17 @@ lang_code = language_map[language]
 translator = Translator()
 
 # -------------------------------------------------
+# MEDICAL REFERENCE RANGES
+# -------------------------------------------------
+RANGES = {
+    "Fasting Sugar": (70, 100),
+    "HbA1c": (0, 5.6),
+    "Total Cholesterol": (0, 200),
+    "Vitamin D": (30, 100),
+    "Vitamin B12": (200, 900)
+}
+
+# -------------------------------------------------
 # PDF UPLOAD
 # -------------------------------------------------
 st.subheader("📄 Upload Medical Report (PDF)")
@@ -41,9 +52,8 @@ def extract_text_from_pdf(pdf):
     text = ""
     with pdfplumber.open(pdf) as pdf_doc:
         for page in pdf_doc.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
+            if page.extract_text():
+                text += page.extract_text() + "\n"
     return text
 
 # -------------------------------------------------
@@ -54,10 +64,10 @@ def detect_report_sections(text):
         "Complete Blood Count": [],
         "Blood Sugar / Diabetes": [],
         "Lipid Profile": [],
+        "Vitamins": [],
         "Thyroid Function": [],
         "Kidney Function": [],
         "Liver Function": [],
-        "Vitamins": [],
         "Urine Analysis": [],
         "Infection Screening": [],
         "Others": []
@@ -66,68 +76,98 @@ def detect_report_sections(text):
     for line in text.split("\n"):
         l = line.lower()
 
-        if any(k in l for k in ["hemoglobin", "rbc", "wbc", "platelet", "esr"]):
+        if any(k in l for k in ["hemoglobin", "rbc", "wbc", "platelet"]):
             sections["Complete Blood Count"].append(line)
-
         elif any(k in l for k in ["fasting", "glucose", "hba1c"]):
             sections["Blood Sugar / Diabetes"].append(line)
-
-        elif any(k in l for k in ["cholesterol", "hdl", "ldl", "triglyceride"]):
+        elif any(k in l for k in ["cholesterol", "hdl", "ldl"]):
             sections["Lipid Profile"].append(line)
-
-        elif any(k in l for k in ["tsh", "t3", "t4"]):
-            sections["Thyroid Function"].append(line)
-
-        elif any(k in l for k in ["creatinine", "urea", "bun", "uric"]):
-            sections["Kidney Function"].append(line)
-
-        elif any(k in l for k in ["bilirubin", "sgot", "sgpt", "albumin"]):
-            sections["Liver Function"].append(line)
-
         elif any(k in l for k in ["vitamin d", "vitamin b12"]):
             sections["Vitamins"].append(line)
-
-        elif any(k in l for k in ["urine", "microalbumin"]):
+        elif any(k in l for k in ["tsh", "t3", "t4"]):
+            sections["Thyroid Function"].append(line)
+        elif any(k in l for k in ["creatinine", "urea"]):
+            sections["Kidney Function"].append(line)
+        elif any(k in l for k in ["bilirubin", "sgot", "sgpt"]):
+            sections["Liver Function"].append(line)
+        elif "urine" in l:
             sections["Urine Analysis"].append(line)
-
         elif any(k in l for k in ["hiv", "hbsag"]):
             sections["Infection Screening"].append(line)
-
         else:
             sections["Others"].append(line)
 
     return sections
 
 # -------------------------------------------------
-# SECTION EXPLANATION (VOICE-FRIENDLY)
+# VALUE EXTRACTION
 # -------------------------------------------------
-def explain_section(section_name, lines):
-    if not lines:
-        return f"No significant findings in {section_name}."
+def extract_values(text):
+    values = {}
 
-    explanations = {
-        "Complete Blood Count":
-            "This section checks your blood levels, including hemoglobin and white blood cells.",
-        "Blood Sugar / Diabetes":
-            "This section explains your blood sugar levels and diabetes control.",
-        "Lipid Profile":
-            "This section shows cholesterol and fat levels related to heart health.",
-        "Thyroid Function":
-            "This section checks whether your thyroid hormones are normal.",
-        "Kidney Function":
-            "This section evaluates how well your kidneys are working.",
-        "Liver Function":
-            "This section assesses the health of your liver.",
-        "Vitamins":
-            "This section checks important vitamins like Vitamin D and Vitamin B12.",
-        "Urine Analysis":
-            "This section analyzes urine to detect sugar, protein, or infection.",
-        "Infection Screening":
-            "This section screens for infections such as HIV or Hepatitis."
+    patterns = {
+        "Fasting Sugar": r'Fasting.*?(\d+)',
+        "HbA1c": r'HbA1c.*?([\d.]+)',
+        "Total Cholesterol": r'Cholesterol.*?(\d+)',
+        "Vitamin D": r'Vitamin D.*?([\d.]+)',
+        "Vitamin B12": r'Vitamin B12.*?(\d+)'
     }
 
-    return explanations.get(section_name,
-                            "This section contains additional medical information.")
+    for key, pattern in patterns.items():
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            values[key] = float(match.group(1))
+
+    return values
+
+# -------------------------------------------------
+# CONDITION ANALYSIS
+# -------------------------------------------------
+def get_condition(test, value):
+    low, high = RANGES[test]
+    if value < low:
+        return "LOW"
+    elif value > high:
+        return "HIGH"
+    else:
+        return "NORMAL"
+
+def section_condition(section, values):
+    conditions = []
+
+    for test in values:
+        if section == "Blood Sugar / Diabetes" and test in ["Fasting Sugar", "HbA1c"]:
+            conditions.append(f"{test} is {get_condition(test, values[test])}")
+
+        if section == "Lipid Profile" and test == "Total Cholesterol":
+            conditions.append(f"{test} is {get_condition(test, values[test])}")
+
+        if section == "Vitamins" and test in ["Vitamin D", "Vitamin B12"]:
+            conditions.append(f"{test} is {get_condition(test, values[test])}")
+
+    if not conditions:
+        return "Values are mostly within normal range."
+
+    return "; ".join(conditions)
+
+# -------------------------------------------------
+# SECTION EXPLANATION + CONDITION
+# -------------------------------------------------
+def explain_section(section, values):
+    base_explanation = {
+        "Complete Blood Count": "This section evaluates blood cells and immunity.",
+        "Blood Sugar / Diabetes": "This section shows blood sugar control and diabetes status.",
+        "Lipid Profile": "This section evaluates cholesterol related to heart health.",
+        "Vitamins": "This section checks vitamin deficiency levels.",
+        "Thyroid Function": "This section evaluates thyroid hormone balance.",
+        "Kidney Function": "This section checks kidney performance.",
+        "Liver Function": "This section assesses liver health.",
+        "Urine Analysis": "This section analyzes urine parameters.",
+        "Infection Screening": "This section screens for infections."
+    }
+
+    condition = section_condition(section, values)
+    return f"{base_explanation.get(section,'Medical information section')} Condition: {condition}."
 
 # -------------------------------------------------
 # TEXT TO SPEECH
@@ -139,10 +179,35 @@ def speak(text, lang):
     return temp.name
 
 # -------------------------------------------------
-# TEXT CHAT (OPTIONAL)
+# TEXT INPUT
 # -------------------------------------------------
-st.subheader("💬 Text Chat (Optional)")
-user_text = st.text_input("Ask a question about your report")
+st.subheader("💬 Ask a Question")
+user_text = st.text_input("Example: Explain my blood sugar condition")
+
+# -------------------------------------------------
+# QUERY TO SECTION
+# -------------------------------------------------
+def map_query_to_section(q):
+    q = q.lower()
+    if "sugar" in q or "diabetes" in q:
+        return "Blood Sugar / Diabetes"
+    if "cholesterol" in q:
+        return "Lipid Profile"
+    if "vitamin" in q:
+        return "Vitamins"
+    if "thyroid" in q:
+        return "Thyroid Function"
+    if "kidney" in q:
+        return "Kidney Function"
+    if "liver" in q:
+        return "Liver Function"
+    if "urine" in q:
+        return "Urine Analysis"
+    if "infection" in q:
+        return "Infection Screening"
+    if "blood" in q or "cbc" in q:
+        return "Complete Blood Count"
+    return None
 
 # -------------------------------------------------
 # MAIN LOGIC
@@ -150,53 +215,62 @@ user_text = st.text_input("Ask a question about your report")
 if pdf_file:
     report_text = extract_text_from_pdf(pdf_file)
     sections = detect_report_sections(report_text)
+    values = extract_values(report_text)
 
-    st.subheader("📂 Report Sections")
-    for sec, lines in sections.items():
+    st.subheader("📂 Detected Sections")
+    for s, lines in sections.items():
         if lines:
-            with st.expander(sec):
-                for l in lines[:8]:
+            with st.expander(s):
+                for l in lines[:6]:
                     st.write(l)
 
-    # Text-based question handling
+    # ---- USER QUERY MODE ----
     if user_text:
-        st.session_state.conversation_log.append(f"User (Text): {user_text}")
+        st.session_state.conversation_log.append(f"User: {user_text}")
+        section = map_query_to_section(user_text)
 
-    # Button to explain entire report
-    st.subheader("🔊 Voice Explanation for All Sections")
-    explain_all = st.button("▶️ Explain Entire Report (Voice)")
-
-    if explain_all:
-        for section, lines in sections.items():
-            if not lines:
-                continue
-
-            explanation = explain_section(section, lines)
+        if section:
+            explanation = explain_section(section, values)
             translated = translator.translate(explanation, dest=lang_code).text
 
-            st.markdown(f"### 🧩 {section}")
+            st.subheader(f"🧠 {section}")
             st.write(translated)
 
-            audio_path = speak(translated, lang_code)
-            st.audio(audio_path)
+            audio = speak(translated, lang_code)
+            st.audio(audio)
 
-            st.session_state.conversation_log.append(
-                f"{section}: {translated}"
-            )
+            st.session_state.conversation_log.append(f"{section}: {translated}")
+        else:
+            st.warning("Could not understand the question.")
+
+    # ---- FULL REPORT MODE ----
+    else:
+        st.subheader("🔊 Explain Entire Report")
+        if st.button("▶️ Explain All Sections"):
+            for section in sections:
+                explanation = explain_section(section, values)
+                translated = translator.translate(explanation, dest=lang_code).text
+
+                st.markdown(f"### 🧩 {section}")
+                st.write(translated)
+
+                audio = speak(translated, lang_code)
+                st.audio(audio)
+
+                st.session_state.conversation_log.append(f"{section}: {translated}")
 
 # -------------------------------------------------
-# DOWNLOAD TRANSCRIPT
+# TRANSCRIPT DOWNLOAD
 # -------------------------------------------------
 st.markdown("---")
-st.subheader("📥 Download Conversation Transcript")
+st.subheader("📥 Download Transcript")
 
 if st.session_state.conversation_log:
     transcript = "\n".join(st.session_state.conversation_log)
     st.download_button(
-        label="⬇️ Download Transcript (.txt)",
-        data=transcript,
-        file_name="medical_conversation_transcript.txt",
-        mime="text/plain"
+        "⬇️ Download Transcript",
+        transcript,
+        file_name="medical_report_transcript.txt"
     )
 
-st.caption("⚠️ Educational use only. Not a medical diagnosis.")
+st.caption("⚠️ Educational use only. Not medical advice.")
