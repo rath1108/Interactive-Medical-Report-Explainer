@@ -2,128 +2,118 @@ import streamlit as st
 import pdfplumber
 import re
 import tempfile
+import numpy as np
 from gtts import gTTS
 from deep_translator import GoogleTranslator
+import speech_recognition as sr
+from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
+import av
+import soundfile as sf
 
-# -------------------------------------------------
+# =================================================
 # PAGE CONFIG
-# -------------------------------------------------
+# =================================================
 st.set_page_config(page_title="Medical Report Explainer", layout="centered")
 st.title("🩺 Medical Report Explainer")
-st.write("Section-wise Condition | Multilingual Voice Explanation")
+st.write("Patient Details | Natural Language | Real-Time Multilingual Voice")
 
-# -------------------------------------------------
+# =================================================
 # SESSION STATE
-# -------------------------------------------------
+# =================================================
 if "conversation_log" not in st.session_state:
     st.session_state.conversation_log = []
 
-# -------------------------------------------------
-# LANGUAGE SELECTION
-# -------------------------------------------------
+if "voice_query" not in st.session_state:
+    st.session_state.voice_query = ""
+
+# =================================================
+# LANGUAGE SELECTION (OUTPUT)
+# =================================================
 language_map = {
     "English": "en",
     "Hindi": "hi",
     "Tamil": "ta",
     "Telugu": "te"
 }
-language = st.selectbox("🌐 Select Language", list(language_map.keys()))
+language = st.selectbox("🌐 Select Output Language", list(language_map.keys()))
 lang_code = language_map[language]
 
-# -------------------------------------------------
-# MEDICAL REFERENCE RANGES
-# -------------------------------------------------
-RANGES = {
-    "Fasting Sugar": (70, 100),
-    "HbA1c": (0, 5.6),
-    "Total Cholesterol": (0, 200),
-    "Vitamin D": (30, 100),
-    "Vitamin B12": (200, 900)
+# =================================================
+# CLINICAL NORMAL RANGES (SAFE STRUCTURE)
+# =================================================
+NORMAL_RANGES = {
+    "Hemoglobin": {"male": (13.5, 17.5), "female": (12.0, 15.5), "unit": "g/dL"},
+    "Total WBC Count": {"range": (4000, 11000), "unit": "cells/µL"},
+    "Platelet Count": {"range": (150000, 450000), "unit": "/µL"},
+    "Fasting Blood Sugar": {"range": (70, 99), "unit": "mg/dL"},
+    "HbA1c": {"range": (0, 5.7), "unit": "%"},
+    "Total Cholesterol": {"range": (0, 200), "unit": "mg/dL"},
+    "LDL": {"range": (0, 100), "unit": "mg/dL"},
+    "HDL": {"male": (40, 1000), "female": (50, 1000), "unit": "mg/dL"},
+    "Triglycerides": {"range": (0, 150), "unit": "mg/dL"},
+    "SGPT": {"range": (7, 56), "unit": "U/L"},
+    "SGOT": {"range": (10, 40), "unit": "U/L"},
+    "Serum Creatinine": {"male": (0.7, 1.3), "female": (0.6, 1.1), "unit": "mg/dL"},
+    "Vitamin D": {"range": (30, 100), "unit": "ng/mL"},
 }
 
-# -------------------------------------------------
-# PDF UPLOAD
-# -------------------------------------------------
-st.subheader("📄 Upload Medical Report (PDF)")
-pdf_file = st.file_uploader("Upload PDF", type=["pdf"])
+QUERY_TO_PARAMS = {
+    "sugar": ["Fasting Blood Sugar", "HbA1c"],
+    "diabetes": ["Fasting Blood Sugar", "HbA1c"],
+    "cholesterol": ["Total Cholesterol", "LDL", "HDL", "Triglycerides"],
+    "vitamin": ["Vitamin D"],
+    "cbc": ["Hemoglobin", "Total WBC Count", "Platelet Count"],
+    "kidney": ["Serum Creatinine"],
+    "liver": ["SGPT", "SGOT"]
+}
 
-def extract_text_from_pdf(pdf):
+# =================================================
+# PDF TEXT EXTRACTION
+# =================================================
+def extract_text(pdf):
     text = ""
-    with pdfplumber.open(pdf) as pdf_doc:
-        for page in pdf_doc.pages:
+    with pdfplumber.open(pdf) as p:
+        for page in p.pages:
             if page.extract_text():
                 text += page.extract_text() + "\n"
     return text
 
-# -------------------------------------------------
-# SECTION DETECTION
-# -------------------------------------------------
-def detect_report_sections(text):
-    sections = {
-        "Complete Blood Count": [],
-        "Blood Sugar / Diabetes": [],
-        "Lipid Profile": [],
-        "Vitamins": [],
-        "Thyroid Function": [],
-        "Kidney Function": [],
-        "Liver Function": [],
-        "Urine Analysis": [],
-        "Infection Screening": [],
-        "Others": []
-    }
+# =================================================
+# PATIENT DETAILS EXTRACTION
+# =================================================
+def extract_patient_details(text):
+    details = {"Name": "Not Found", "Age": "Not Found", "Gender": "Male"}
 
-    for line in text.split("\n"):
-        l = line.lower()
+    if m := re.search(r'Patient\s*Name\s*[:\-]\s*(.*)', text, re.I):
+        details["Name"] = m.group(1).strip()
+    if m := re.search(r'Age\s*[:\-]\s*(\d+)', text, re.I):
+        details["Age"] = m.group(1)
+    if m := re.search(r'(Male|Female)', text, re.I):
+        details["Gender"] = m.group(1)
 
-        if any(k in l for k in ["hemoglobin", "rbc", "wbc", "platelet"]):
-            sections["Complete Blood Count"].append(line)
-        elif any(k in l for k in ["fasting", "glucose", "hba1c"]):
-            sections["Blood Sugar / Diabetes"].append(line)
-        elif any(k in l for k in ["cholesterol", "hdl", "ldl"]):
-            sections["Lipid Profile"].append(line)
-        elif any(k in l for k in ["vitamin d", "vitamin b12"]):
-            sections["Vitamins"].append(line)
-        elif any(k in l for k in ["tsh", "t3", "t4"]):
-            sections["Thyroid Function"].append(line)
-        elif any(k in l for k in ["creatinine", "urea"]):
-            sections["Kidney Function"].append(line)
-        elif any(k in l for k in ["bilirubin", "sgot", "sgpt"]):
-            sections["Liver Function"].append(line)
-        elif "urine" in l:
-            sections["Urine Analysis"].append(line)
-        elif any(k in l for k in ["hiv", "hbsag"]):
-            sections["Infection Screening"].append(line)
-        else:
-            sections["Others"].append(line)
+    return details
 
-    return sections
-
-# -------------------------------------------------
-# VALUE EXTRACTION
-# -------------------------------------------------
-def extract_values(text):
-    values = {}
-
-    patterns = {
-        "Fasting Sugar": r'Fasting.*?(\d+)',
-        "HbA1c": r'HbA1c.*?([\d.]+)',
-        "Total Cholesterol": r'Cholesterol.*?(\d+)',
-        "Vitamin D": r'Vitamin D.*?([\d.]+)',
-        "Vitamin B12": r'Vitamin B12.*?(\d+)'
-    }
-
-    for key, pattern in patterns.items():
-        match = re.search(pattern, text, re.IGNORECASE)
+# =================================================
+# PARAMETER EXTRACTION (SAFE)
+# =================================================
+def extract_present_parameters(text):
+    found = {}
+    for param in NORMAL_RANGES:
+        match = re.search(rf"{param}.*?([0-9]+(?:\.[0-9]+)?)", text, re.I)
         if match:
-            values[key] = float(match.group(1))
+            found[param] = float(match.group(1))
+    return found
 
-    return values
+def evaluate(param, value, gender):
+    ref = NORMAL_RANGES[param]
 
-# -------------------------------------------------
-# CONDITION ANALYSIS
-# -------------------------------------------------
-def get_condition(test, value):
-    low, high = RANGES[test]
+    if gender in ref:
+        low, high = ref[gender]
+    elif "range" in ref:
+        low, high = ref["range"]
+    else:
+        return "UNKNOWN"
+
     if value < low:
         return "LOW"
     elif value > high:
@@ -131,153 +121,130 @@ def get_condition(test, value):
     else:
         return "NORMAL"
 
-def section_condition(section, values):
-    conditions = []
+def natural_sentence(param, value, unit, condition):
+    if condition == "NORMAL":
+        return f"Your {param} is {value} {unit}, which is within the normal range."
+    elif condition == "LOW":
+        return f"Your {param} is {value} {unit}, which is lower than normal."
+    else:
+        return f"Your {param} is {value} {unit}, which is higher than normal."
 
-    for test in values:
-        if section == "Blood Sugar / Diabetes" and test in ["Fasting Sugar", "HbA1c"]:
-            conditions.append(f"{test} is {get_condition(test, values[test])}")
-
-        if section == "Lipid Profile" and test == "Total Cholesterol":
-            conditions.append(f"{test} is {get_condition(test, values[test])}")
-
-        if section == "Vitamins" and test in ["Vitamin D", "Vitamin B12"]:
-            conditions.append(f"{test} is {get_condition(test, values[test])}")
-
-    if not conditions:
-        return "Values are mostly within normal range."
-
-    return "; ".join(conditions)
-
-# -------------------------------------------------
-# SECTION EXPLANATION + CONDITION
-# -------------------------------------------------
-def explain_section(section, values):
-    base_explanation = {
-        "Complete Blood Count": "This section evaluates blood cells and immunity.",
-        "Blood Sugar / Diabetes": "This section shows blood sugar control and diabetes status.",
-        "Lipid Profile": "This section evaluates cholesterol related to heart health.",
-        "Vitamins": "This section checks vitamin deficiency levels.",
-        "Thyroid Function": "This section evaluates thyroid hormone balance.",
-        "Kidney Function": "This section checks kidney performance.",
-        "Liver Function": "This section assesses liver health.",
-        "Urine Analysis": "This section analyzes urine parameters.",
-        "Infection Screening": "This section screens for infections."
-    }
-
-    condition = section_condition(section, values)
-    return f"{base_explanation.get(section,'Medical information section')} Condition: {condition}."
-
-# -------------------------------------------------
+# =================================================
 # TEXT TO SPEECH
-# -------------------------------------------------
-def speak(text, lang):
-    tts = gTTS(text=text, lang=lang)
+# =================================================
+def speak(text):
+    translated = GoogleTranslator(source="auto", target=lang_code).translate(text)
+    tts = gTTS(translated, lang=lang_code)
     temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
     tts.save(temp.name)
-    return temp.name
+    return translated, temp.name
 
-# -------------------------------------------------
+# =================================================
+# REAL-TIME VOICE INPUT (WEBRTC)
+# =================================================
+class AudioProcessor(AudioProcessorBase):
+    def __init__(self):
+        self.frames = []
+
+    def recv(self, frame: av.AudioFrame):
+        audio = frame.to_ndarray().flatten()
+        self.frames.extend(audio)
+        return frame
+
+st.subheader("🎤 Speak Your Question (Real-Time)")
+webrtc_ctx = webrtc_streamer(
+    key="mic",
+    audio_processor_factory=AudioProcessor,
+    media_stream_constraints={"audio": True, "video": False},
+)
+
+if webrtc_ctx and webrtc_ctx.audio_processor:
+    if st.button("🧠 Process Voice"):
+        audio_np = np.array(webrtc_ctx.audio_processor.frames, dtype=np.float32)
+        if len(audio_np) > 0:
+            sf.write("temp.wav", audio_np, 16000)
+            r = sr.Recognizer()
+            with sr.AudioFile("temp.wav") as src:
+                audio_data = r.record(src)
+            try:
+                st.session_state.voice_query = r.recognize_google(audio_data)
+                st.success(f"🗣 You said: {st.session_state.voice_query}")
+            except:
+                st.error("Could not recognize voice input")
+
+# =================================================
 # TEXT INPUT
-# -------------------------------------------------
-st.subheader("💬 Ask a Question")
-user_text = st.text_input("Example: Explain my blood sugar condition")
+# =================================================
+st.subheader("💬 Or Type Your Question")
+text_query = st.text_input("Example: Is my fasting sugar normal?")
 
-# -------------------------------------------------
-# QUERY TO SECTION
-# -------------------------------------------------
-def map_query_to_section(q):
-    q = q.lower()
-    if "sugar" in q or "diabetes" in q:
-        return "Blood Sugar / Diabetes"
-    if "cholesterol" in q:
-        return "Lipid Profile"
-    if "vitamin" in q:
-        return "Vitamins"
-    if "thyroid" in q:
-        return "Thyroid Function"
-    if "kidney" in q:
-        return "Kidney Function"
-    if "liver" in q:
-        return "Liver Function"
-    if "urine" in q:
-        return "Urine Analysis"
-    if "infection" in q:
-        return "Infection Screening"
-    if "blood" in q or "cbc" in q:
-        return "Complete Blood Count"
-    return None
-
-# -------------------------------------------------
+# =================================================
 # MAIN LOGIC
-# -------------------------------------------------
+# =================================================
+pdf_file = st.file_uploader("📄 Upload Medical Report (PDF)", type=["pdf"])
+
 if pdf_file:
-    report_text = extract_text_from_pdf(pdf_file)
-    sections = detect_report_sections(report_text)
-    values = extract_values(report_text)
+    report_text = extract_text(pdf_file)
+    patient = extract_patient_details(report_text)
+    gender = patient["Gender"].lower()
 
-    st.subheader("📂 Detected Sections")
-    for s, lines in sections.items():
-        if lines:
-            with st.expander(s):
-                for l in lines[:6]:
-                    st.write(l)
+    st.subheader("👤 Patient Information")
+    st.table(patient)
 
-    # ---- USER QUERY MODE ----
-    if user_text:
-        st.session_state.conversation_log.append(f"User: {user_text}")
-        section = map_query_to_section(user_text)
+    found = extract_present_parameters(report_text)
 
-        if section:
-            explanation = explain_section(section, values)
+    query = (st.session_state.voice_query or text_query).lower()
 
-            translated = GoogleTranslator(
-                source="auto",
-                target=lang_code
-            ).translate(explanation)
+    st.subheader("🧠 Medical Explanation")
 
-            st.subheader(f"🧠 {section}")
-            st.write(translated)
+    if query:
+        requested = []
+        for key, params in QUERY_TO_PARAMS.items():
+            if key in query:
+                requested.extend(params)
 
-            audio = speak(translated, lang_code)
-            st.audio(audio)
+        shown = False
+        for param in requested:
+            if param in found:
+                value = found[param]
+                cond = evaluate(param, value, gender)
+                unit = NORMAL_RANGES[param]["unit"]
+                sentence = natural_sentence(param, value, unit, cond)
 
-            st.session_state.conversation_log.append(f"{section}: {translated}")
-        else:
-            st.warning("Could not understand the question.")
-
-    # ---- FULL REPORT MODE ----
-    else:
-        st.subheader("🔊 Explain Entire Report")
-        if st.button("▶️ Explain All Sections"):
-            for section in sections:
-                explanation = explain_section(section, values)
-
-                translated = GoogleTranslator(
-                    source="auto",
-                    target=lang_code
-                ).translate(explanation)
-
-                st.markdown(f"### 🧩 {section}")
-                st.write(translated)
-
-                audio = speak(translated, lang_code)
+                st.write("•", sentence)
+                translated, audio = speak(sentence)
                 st.audio(audio)
 
-                st.session_state.conversation_log.append(f"{section}: {translated}")
+                st.session_state.conversation_log.append(translated)
+                shown = True
 
-# -------------------------------------------------
+        if not shown:
+            msg = "No data available for the requested test in this report."
+            st.info(msg)
+            _, audio = speak(msg)
+            st.audio(audio)
+
+    else:
+        for param, value in found.items():
+            cond = evaluate(param, value, gender)
+            unit = NORMAL_RANGES[param]["unit"]
+            sentence = natural_sentence(param, value, unit, cond)
+
+            st.write("•", sentence)
+            translated, audio = speak(sentence)
+            st.audio(audio)
+
+            st.session_state.conversation_log.append(translated)
+
+# =================================================
 # TRANSCRIPT DOWNLOAD
-# -------------------------------------------------
+# =================================================
 st.markdown("---")
-st.subheader("📥 Download Transcript")
-
 if st.session_state.conversation_log:
-    transcript = "\n".join(st.session_state.conversation_log)
     st.download_button(
-        "⬇️ Download Transcript",
-        transcript,
-        file_name="medical_report_transcript.txt"
+        "⬇️ Download Conversation Transcript",
+        "\n".join(st.session_state.conversation_log),
+        file_name="medical_conversation.txt"
     )
 
-st.caption("⚠️ Educational use only. Not medical advice.")
+st.caption("⚠️ Educational use only. Not a medical diagnosis.")
