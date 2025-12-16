@@ -58,14 +58,16 @@ in a simple and interactive way.
 git clone https://github.com/rath1108/medical-report-explainer.git
 cd medical-report-explainer
 
-**Create Conda Environment**
-conda create -n medical python=3.9
-conda activate medical
+**software needed **
+ python=3.9
+
+**Run in command prompt**
+**first need to locate the file folder using**
+cd path of folder
 
 **Install Dependencies**
 pip install -r requirements.txt
 
-
-**Run the Application**
+** then run application using**
 streamlit run app.py
 
