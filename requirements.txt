@@ -3,10 +3,9 @@ streamlit-webrtc
 pdfplumber
 SpeechRecognition
 gTTS
-pydub
+deep-translator
 av
 soundfile
-deep-translator 
-
+numpy
 
 
