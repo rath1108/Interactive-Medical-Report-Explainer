@@ -15,7 +15,7 @@ import soundfile as sf
 # =================================================
 st.set_page_config(page_title="Medical Report Explainer", layout="centered")
 st.title("🩺 Medical Report Explainer")
-st.write("Patient Details | Natural Language | Real-Time Multilingual Voice")
+st.write("Robust Patient Details | Natural Language | Real-Time Multilingual Voice")
 
 # =================================================
 # SESSION STATE
@@ -39,24 +39,38 @@ language = st.selectbox("🌐 Select Output Language", list(language_map.keys())
 lang_code = language_map[language]
 
 # =================================================
-# CLINICAL NORMAL RANGES (SAFE STRUCTURE)
+# CLINICAL NORMAL RANGES (CORE SET)
 # =================================================
 NORMAL_RANGES = {
+    # CBC
     "Hemoglobin": {"male": (13.5, 17.5), "female": (12.0, 15.5), "unit": "g/dL"},
     "Total WBC Count": {"range": (4000, 11000), "unit": "cells/µL"},
     "Platelet Count": {"range": (150000, 450000), "unit": "/µL"},
+
+    # Diabetes
     "Fasting Blood Sugar": {"range": (70, 99), "unit": "mg/dL"},
     "HbA1c": {"range": (0, 5.7), "unit": "%"},
+
+    # Lipid
     "Total Cholesterol": {"range": (0, 200), "unit": "mg/dL"},
     "LDL": {"range": (0, 100), "unit": "mg/dL"},
     "HDL": {"male": (40, 1000), "female": (50, 1000), "unit": "mg/dL"},
     "Triglycerides": {"range": (0, 150), "unit": "mg/dL"},
+
+    # Liver
     "SGPT": {"range": (7, 56), "unit": "U/L"},
     "SGOT": {"range": (10, 40), "unit": "U/L"},
+
+    # Kidney
     "Serum Creatinine": {"male": (0.7, 1.3), "female": (0.6, 1.1), "unit": "mg/dL"},
+
+    # Vitamins
     "Vitamin D": {"range": (30, 100), "unit": "ng/mL"},
 }
 
+# =================================================
+# QUERY → PARAMETER MAP (FOR FILTERING)
+# =================================================
 QUERY_TO_PARAMS = {
     "sugar": ["Fasting Blood Sugar", "HbA1c"],
     "diabetes": ["Fasting Blood Sugar", "HbA1c"],
@@ -64,7 +78,7 @@ QUERY_TO_PARAMS = {
     "vitamin": ["Vitamin D"],
     "cbc": ["Hemoglobin", "Total WBC Count", "Platelet Count"],
     "kidney": ["Serum Creatinine"],
-    "liver": ["SGPT", "SGOT"]
+    "liver": ["SGPT", "SGOT"],
 }
 
 # =================================================
@@ -79,17 +93,34 @@ def extract_text(pdf):
     return text
 
 # =================================================
-# PATIENT DETAILS EXTRACTION
+# ROBUST PATIENT DETAILS EXTRACTION (HEURISTIC)
 # =================================================
 def extract_patient_details(text):
-    details = {"Name": "Not Found", "Age": "Not Found", "Gender": "Male"}
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    joined = " ".join(lines)
 
-    if m := re.search(r'Patient\s*Name\s*[:\-]\s*(.*)', text, re.I):
-        details["Name"] = m.group(1).strip()
-    if m := re.search(r'Age\s*[:\-]\s*(\d+)', text, re.I):
-        details["Age"] = m.group(1)
-    if m := re.search(r'(Male|Female)', text, re.I):
-        details["Gender"] = m.group(1)
+    details = {"Name": "Not Found", "Age": "Not Found", "Gender": "Not Found"}
+
+    # Age detection (45 Y, 45 Years, 45Yr)
+    age_match = re.search(r'(\d{1,3})\s*(Y|Years|Yr|yrs)', joined, re.I)
+    if age_match:
+        details["Age"] = age_match.group(1)
+
+    # Gender detection (Male/Female/M/F)
+    if re.search(r'\bMale\b|\bM\b', joined, re.I):
+        details["Gender"] = "Male"
+    elif re.search(r'\bFemale\b|\bF\b', joined, re.I):
+        details["Gender"] = "Female"
+
+    # Name detection (heuristic: uppercase lines near top)
+    for line in lines[:6]:
+        if (
+            len(line.split()) <= 4
+            and re.match(r'^[A-Z][A-Z\s\.]+$', line)
+            and not re.search(r'LAB|HOSPITAL|PATHOLOGY|REPORT', line, re.I)
+        ):
+            details["Name"] = line.title()
+            break
 
     return details
 
@@ -101,7 +132,10 @@ def extract_present_parameters(text):
     for param in NORMAL_RANGES:
         match = re.search(rf"{param}.*?([0-9]+(?:\.[0-9]+)?)", text, re.I)
         if match:
-            found[param] = float(match.group(1))
+            try:
+                found[param] = float(match.group(1))
+            except ValueError:
+                continue
     return found
 
 def evaluate(param, value, gender):
@@ -130,7 +164,7 @@ def natural_sentence(param, value, unit, condition):
         return f"Your {param} is {value} {unit}, which is higher than normal."
 
 # =================================================
-# TEXT TO SPEECH
+# TEXT TO SPEECH (WITH TRANSLATION)
 # =================================================
 def speak(text):
     translated = GoogleTranslator(source="auto", target=lang_code).translate(text)
@@ -181,15 +215,18 @@ text_query = st.text_input("Example: Is my fasting sugar normal?")
 # =================================================
 # MAIN LOGIC
 # =================================================
-pdf_file = st.file_uploader("📄 Upload Medical Report (PDF)", type=["pdf"])
+st.subheader("📄 Upload Medical Report")
+pdf_file = st.file_uploader("Upload PDF", type=["pdf"])
 
 if pdf_file:
     report_text = extract_text(pdf_file)
     patient = extract_patient_details(report_text)
-    gender = patient["Gender"].lower()
+
+    gender = patient["Gender"].lower() if patient["Gender"] != "Not Found" else "male"
 
     st.subheader("👤 Patient Information")
     st.table(patient)
+    st.caption("ℹ️ Patient details are auto-detected and may vary with report format.")
 
     found = extract_present_parameters(report_text)
 
