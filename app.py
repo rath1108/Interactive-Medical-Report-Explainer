@@ -3,7 +3,7 @@ import pdfplumber
 import re
 import tempfile
 from gtts import gTTS
-from googletrans import Translator
+from deep_translator import GoogleTranslator
 
 # -------------------------------------------------
 # PAGE CONFIG
@@ -29,7 +29,6 @@ language_map = {
 }
 language = st.selectbox("🌐 Select Language", list(language_map.keys()))
 lang_code = language_map[language]
-translator = Translator()
 
 # -------------------------------------------------
 # MEDICAL REFERENCE RANGES
@@ -231,7 +230,11 @@ if pdf_file:
 
         if section:
             explanation = explain_section(section, values)
-            translated = translator.translate(explanation, dest=lang_code).text
+
+            translated = GoogleTranslator(
+                source="auto",
+                target=lang_code
+            ).translate(explanation)
 
             st.subheader(f"🧠 {section}")
             st.write(translated)
@@ -249,7 +252,11 @@ if pdf_file:
         if st.button("▶️ Explain All Sections"):
             for section in sections:
                 explanation = explain_section(section, values)
-                translated = translator.translate(explanation, dest=lang_code).text
+
+                translated = GoogleTranslator(
+                    source="auto",
+                    target=lang_code
+                ).translate(explanation)
 
                 st.markdown(f"### 🧩 {section}")
                 st.write(translated)
