@@ -101,26 +101,41 @@ def extract_patient_details(text):
 
     details = {"Name": "Not Found", "Age": "Not Found", "Gender": "Not Found"}
 
-    # Age detection (45 Y, 45 Years, 45Yr)
+    # -----------------------------
+    # AGE detection
+    # -----------------------------
     age_match = re.search(r'(\d{1,3})\s*(Y|Years|Yr|yrs)', joined, re.I)
     if age_match:
         details["Age"] = age_match.group(1)
 
-    # Gender detection (Male/Female/M/F)
+    # -----------------------------
+    # GENDER detection
+    # -----------------------------
     if re.search(r'\bMale\b|\bM\b', joined, re.I):
         details["Gender"] = "Male"
     elif re.search(r'\bFemale\b|\bF\b', joined, re.I):
         details["Gender"] = "Female"
 
-    # Name detection (heuristic: uppercase lines near top)
-    for line in lines[:50]:
+    # -----------------------------
+    # NAME detection (PRIORITY ORDER)
+    # -----------------------------
+
+    # 1️⃣ Explicit "Name :" format
+    for line in lines[:10]:
+        name_match = re.search(r'Name\s*[:\-]\s*([A-Za-z\s]+)', line)
+        if name_match:
+            details["Name"] = name_match.group(1).strip()
+            return details  # strongest signal → stop here
+
+    # 2️⃣ Mixed-case human names (2–3 words)
+    for line in lines[:8]:
         if (
-            len(line.split()) <= 50
-            and re.match(r'^[A-Z][A-Z\s\.]+$', line)
-            and not re.search(r'LAB|HOSPITAL|PATHOLOGY|REPORT', line, re.I)
+            2 <= len(line.split()) <= 4
+            and re.match(r'^[A-Za-z][A-Za-z\s\.]+$', line)
+            and not re.search(r'PATIENT|REPORT|LAB|HOSPITAL|PATHOLOGY|INFORMATION', line, re.I)
         ):
-            details["Name"] = line.title()
-            break
+            details["Name"] = line.strip()
+            return details
 
     return details
 
@@ -285,4 +300,5 @@ if st.session_state.conversation_log:
     )
 
 st.caption("⚠️ Educational use only. Not a medical diagnosis.")
+
 
