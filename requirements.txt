@@ -5,6 +5,6 @@ SpeechRecognition
 gTTS
 pydub
 av
-googletrans
 soundfile
 deep-translator 
+
