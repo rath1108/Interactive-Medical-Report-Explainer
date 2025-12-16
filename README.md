@@ -46,8 +46,8 @@ in a simple and interactive way.
 ---
 
 ## 🚀 Installation & Setup
+**install dependencies**
+pip install -r requirements.txt
 
-### 1️⃣ Clone the Repository
-```bash
-git clone https://github.com/your-username/medical-report-explainer.git
-cd medical-report-explainer
+**to run the application**
+streamlit run app.py
