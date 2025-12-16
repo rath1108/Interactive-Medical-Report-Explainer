@@ -113,9 +113,9 @@ def extract_patient_details(text):
         details["Gender"] = "Female"
 
     # Name detection (heuristic: uppercase lines near top)
-    for line in lines[:6]:
+    for line in lines[:50]:
         if (
-            len(line.split()) <= 4
+            len(line.split()) <= 50
             and re.match(r'^[A-Z][A-Z\s\.]+$', line)
             and not re.search(r'LAB|HOSPITAL|PATHOLOGY|REPORT', line, re.I)
         ):
@@ -285,3 +285,4 @@ if st.session_state.conversation_log:
     )
 
 st.caption("⚠️ Educational use only. Not a medical diagnosis.")
+
