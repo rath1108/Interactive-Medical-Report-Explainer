@@ -121,13 +121,13 @@ def extract_patient_details(text):
     # -----------------------------
     title_pattern = r'(Mr|Mr\.|Ms|Ms\.|Mrs|Mrs\.|Miss|Dr|Dr\.)\s*'
 
-   for line in lines[:10]:
+   for line in lines[:10]
         name_match = re.search(r'Name\s*[:\-]\s*([A-Za-z\s]+)', line)
         if name_match:
             details["Name"] = name_match.group(1).strip()
             return details  # strongest signal → stop here
     # 2️⃣ Standalone name lines (with or without title)
-    for line in lines[:8]:
+    for line in lines[:8]
         clean_line = re.sub(title_pattern, '', line, flags=re.I)
 
         if (
@@ -307,6 +307,7 @@ if st.session_state.conversation_log:
     )
 
 st.caption("⚠️ Educational use only. Not a medical diagnosis.")
+
 
 
 
