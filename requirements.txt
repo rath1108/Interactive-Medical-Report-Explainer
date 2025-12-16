@@ -1,0 +1,8 @@
+streamlit
+streamlit-webrtc
+pdfplumber
+SpeechRecognition
+gTTS
+pydub
+av
+soundfile
