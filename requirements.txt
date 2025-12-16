@@ -5,4 +5,5 @@ SpeechRecognition
 gTTS
 pydub
 av
+googletrans
 soundfile
