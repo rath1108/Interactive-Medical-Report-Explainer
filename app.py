@@ -4,40 +4,36 @@ import re
 import tempfile
 from gtts import gTTS
 from googletrans import Translator
-import speech_recognition as sr
-from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
-import av
 
-# ---------------- PAGE CONFIG ----------------
+# -------------------------------------------------
+# PAGE CONFIG
+# -------------------------------------------------
 st.set_page_config(page_title="Medical Report Explainer", layout="centered")
 st.title("🩺 Medical Report Explainer")
-st.write("Voice + Text | Multilingual | PDF Medical Reports")
+st.write("Structured Medical Report | Multilingual Voice Explanation")
 
-# ---------------- GLOBAL STORAGE ----------------
+# -------------------------------------------------
+# SESSION STATE
+# -------------------------------------------------
 if "conversation_log" not in st.session_state:
     st.session_state.conversation_log = []
 
-# ---------------- LANGUAGE SELECTION ----------------
+# -------------------------------------------------
+# LANGUAGE SELECTION
+# -------------------------------------------------
 language_map = {
     "English": "en",
     "Hindi": "hi",
     "Tamil": "ta",
     "Telugu": "te"
 }
-
-st.subheader("🌐 Select Language")
-language = st.selectbox("Language", list(language_map.keys()))
+language = st.selectbox("🌐 Select Language", list(language_map.keys()))
 lang_code = language_map[language]
-
 translator = Translator()
 
-# ---------------- MEDICAL RANGES ----------------
-MEDICAL_RANGES = {
-    "Fasting Sugar": (70, 100),
-    "Total Cholesterol": (0, 200),
-}
-
-# ---------------- PDF UPLOAD ----------------
+# -------------------------------------------------
+# PDF UPLOAD
+# -------------------------------------------------
 st.subheader("📄 Upload Medical Report (PDF)")
 pdf_file = st.file_uploader("Upload PDF", type=["pdf"])
 
@@ -45,108 +41,152 @@ def extract_text_from_pdf(pdf):
     text = ""
     with pdfplumber.open(pdf) as pdf_doc:
         for page in pdf_doc.pages:
-            text += page.extract_text()
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
     return text
 
-def extract_medical_values(text):
-    patterns = {
-        "Fasting Sugar": r'Fasting.*?(\d+)',
-        "Total Cholesterol": r'Cholesterol.*?(\d+)'
+# -------------------------------------------------
+# SECTION DETECTION
+# -------------------------------------------------
+def detect_report_sections(text):
+    sections = {
+        "Complete Blood Count": [],
+        "Blood Sugar / Diabetes": [],
+        "Lipid Profile": [],
+        "Thyroid Function": [],
+        "Kidney Function": [],
+        "Liver Function": [],
+        "Vitamins": [],
+        "Urine Analysis": [],
+        "Infection Screening": [],
+        "Others": []
     }
-    data = {}
-    for key, pattern in patterns.items():
-        match = re.search(pattern, text, re.IGNORECASE)
-        data[key] = match.group(1) if match else "Not found"
-    return data
 
-def analyze(values):
-    results = []
-    for test, value in values.items():
-        if value == "Not found":
-            continue
-        value = int(value)
-        low, high = MEDICAL_RANGES[test]
-        if value < low:
-            results.append(f"{test} is LOW")
-        elif value > high:
-            results.append(f"{test} is HIGH")
+    for line in text.split("\n"):
+        l = line.lower()
+
+        if any(k in l for k in ["hemoglobin", "rbc", "wbc", "platelet", "esr"]):
+            sections["Complete Blood Count"].append(line)
+
+        elif any(k in l for k in ["fasting", "glucose", "hba1c"]):
+            sections["Blood Sugar / Diabetes"].append(line)
+
+        elif any(k in l for k in ["cholesterol", "hdl", "ldl", "triglyceride"]):
+            sections["Lipid Profile"].append(line)
+
+        elif any(k in l for k in ["tsh", "t3", "t4"]):
+            sections["Thyroid Function"].append(line)
+
+        elif any(k in l for k in ["creatinine", "urea", "bun", "uric"]):
+            sections["Kidney Function"].append(line)
+
+        elif any(k in l for k in ["bilirubin", "sgot", "sgpt", "albumin"]):
+            sections["Liver Function"].append(line)
+
+        elif any(k in l for k in ["vitamin d", "vitamin b12"]):
+            sections["Vitamins"].append(line)
+
+        elif any(k in l for k in ["urine", "microalbumin"]):
+            sections["Urine Analysis"].append(line)
+
+        elif any(k in l for k in ["hiv", "hbsag"]):
+            sections["Infection Screening"].append(line)
+
         else:
-            results.append(f"{test} is NORMAL")
-    return ". ".join(results)
+            sections["Others"].append(line)
 
-# ---------------- TEXT TO SPEECH ----------------
+    return sections
+
+# -------------------------------------------------
+# SECTION EXPLANATION (VOICE-FRIENDLY)
+# -------------------------------------------------
+def explain_section(section_name, lines):
+    if not lines:
+        return f"No significant findings in {section_name}."
+
+    explanations = {
+        "Complete Blood Count":
+            "This section checks your blood levels, including hemoglobin and white blood cells.",
+        "Blood Sugar / Diabetes":
+            "This section explains your blood sugar levels and diabetes control.",
+        "Lipid Profile":
+            "This section shows cholesterol and fat levels related to heart health.",
+        "Thyroid Function":
+            "This section checks whether your thyroid hormones are normal.",
+        "Kidney Function":
+            "This section evaluates how well your kidneys are working.",
+        "Liver Function":
+            "This section assesses the health of your liver.",
+        "Vitamins":
+            "This section checks important vitamins like Vitamin D and Vitamin B12.",
+        "Urine Analysis":
+            "This section analyzes urine to detect sugar, protein, or infection.",
+        "Infection Screening":
+            "This section screens for infections such as HIV or Hepatitis."
+    }
+
+    return explanations.get(section_name,
+                            "This section contains additional medical information.")
+
+# -------------------------------------------------
+# TEXT TO SPEECH
+# -------------------------------------------------
 def speak(text, lang):
-    """
-    Convert text to speech in selected language
-    """
-    try:
-        tts = gTTS(text=text, lang=lang)
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-        tts.save(temp_file.name)
-        return temp_file.name
-    except Exception as e:
-        st.error(f"Error generating speech: {e}")
-        return None
+    tts = gTTS(text=text, lang=lang)
+    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    tts.save(temp.name)
+    return temp.name
 
-# ---------------- TEXT CHAT ----------------
+# -------------------------------------------------
+# TEXT CHAT (OPTIONAL)
+# -------------------------------------------------
 st.subheader("💬 Text Chat (Optional)")
-user_text = st.text_input("Type your question here")
+user_text = st.text_input("Ask a question about your report")
 
-# ---------------- REAL-TIME VOICE INPUT ----------------
-class AudioProcessor(AudioProcessorBase):
-    def __init__(self):
-        self.recognizer = sr.Recognizer()
-        self.audio_frames = []
-
-    def recv(self, frame: av.AudioFrame):
-        self.audio_frames.append(frame)
-        return frame
-
-st.subheader("🎤 Real-Time Voice Input")
-webrtc_ctx = webrtc_streamer(
-    key="voice",
-    audio_processor_factory=AudioProcessor,
-    media_stream_constraints={"audio": True, "video": False},
-)
-
-recognized_text = ""
-
-if webrtc_ctx and webrtc_ctx.state.playing:
-    st.info("🎙 Speak now...")
-
-# ---------------- MAIN LOGIC ----------------
+# -------------------------------------------------
+# MAIN LOGIC
+# -------------------------------------------------
 if pdf_file:
     report_text = extract_text_from_pdf(pdf_file)
-    medical_values = extract_medical_values(report_text)
-    explanation = analyze(medical_values)
+    sections = detect_report_sections(report_text)
 
-    st.subheader("📊 Extracted Medical Values")
-    st.json(medical_values)
+    st.subheader("📂 Report Sections")
+    for sec, lines in sections.items():
+        if lines:
+            with st.expander(sec):
+                for l in lines[:8]:
+                    st.write(l)
 
-    # Decide input source
-    final_query = ""
-
+    # Text-based question handling
     if user_text:
-        final_query = user_text
         st.session_state.conversation_log.append(f"User (Text): {user_text}")
 
-    elif recognized_text:
-        final_query = recognized_text
-        st.session_state.conversation_log.append(f"User (Voice): {recognized_text}")
+    # Button to explain entire report
+    st.subheader("🔊 Voice Explanation for All Sections")
+    explain_all = st.button("▶️ Explain Entire Report (Voice)")
 
-    if explanation:
-        # Translate explanation to selected language
-        translated_explanation = translator.translate(explanation, dest=lang_code).text
+    if explain_all:
+        for section, lines in sections.items():
+            if not lines:
+                continue
 
-        st.subheader("🧠 Medical Explanation")
-        st.write(translated_explanation)
+            explanation = explain_section(section, lines)
+            translated = translator.translate(explanation, dest=lang_code).text
 
-        st.session_state.conversation_log.append(f"System: {translated_explanation}")
+            st.markdown(f"### 🧩 {section}")
+            st.write(translated)
 
-        audio_path = speak(translated_explanation, lang_code)
-        st.audio(audio_path)
+            audio_path = speak(translated, lang_code)
+            st.audio(audio_path)
 
-# ---------------- DOWNLOAD TRANSCRIPT ----------------
+            st.session_state.conversation_log.append(
+                f"{section}: {translated}"
+            )
+
+# -------------------------------------------------
+# DOWNLOAD TRANSCRIPT
+# -------------------------------------------------
 st.markdown("---")
 st.subheader("📥 Download Conversation Transcript")
 
